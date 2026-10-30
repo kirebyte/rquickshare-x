@@ -122,9 +122,13 @@ pub fn mdns_display_name(name: String, hostname: &str) -> String {
 /// Android phones alternate between compact n= records (no name) and long ones
 /// (with the name) for the same endpoint, and pick a new mDNS hostname each
 /// time Quick Share is reopened, so without this the device keeps flipping
-/// back to its hostname.
+/// back to its hostname. The names can be saved to disk so that a later
+/// session shows them before the phone sends the long record again.
 #[derive(Default)]
-pub struct KnownNames(HashMap<String, String>);
+pub struct KnownNames {
+    names: HashMap<String, String>,
+    dirty: bool,
+}
 
 impl KnownNames {
     /// Returns the display name to show for the endpoint `id` announced with
@@ -132,13 +136,63 @@ impl KnownNames {
     /// record or a previous one carried it, else the hostname fallback.
     pub fn resolve(&mut self, id: &str, name: String, hostname: &str) -> String {
         if !name.is_empty() {
-            self.0.insert(id.to_string(), name.clone());
+            let name = name.replace(['\t', '\n', '\r'], " ");
+            if self.names.get(id) != Some(&name) {
+                self.names.insert(id.to_string(), name.clone());
+                self.dirty = true;
+            }
             return name;
         }
-        match self.0.get(id) {
+        match self.names.get(id) {
             Some(known) => known.clone(),
             None => mdns_display_name(name, hostname),
         }
+    }
+
+    /// True when a name was learned since the last `save_to`.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Reads the names saved by `save_to`. A missing or unreadable file just
+    /// gives an empty set.
+    pub fn load_from(path: &Path) -> Self {
+        let mut names = HashMap::new();
+        if let Ok(text) = std::fs::read_to_string(path) {
+            for line in text.lines() {
+                if let Some((id, name)) = line.split_once('\t') {
+                    if !id.is_empty() && !name.is_empty() {
+                        names.insert(id.to_string(), name.to_string());
+                    }
+                }
+            }
+        }
+        Self {
+            names,
+            dirty: false,
+        }
+    }
+
+    /// Writes the names as `id<TAB>name` lines, creating the parent directory.
+    pub fn save_to(&mut self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut entries: Vec<_> = self.names.iter().collect();
+        entries.sort();
+        let text: String = entries
+            .into_iter()
+            .map(|(id, name)| format!("{id}\t{name}\n"))
+            .collect();
+        std::fs::write(path, text)?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Where the names are saved by default: `$XDG_CACHE_HOME/rquickshare/known_names.tsv`.
+    pub fn default_path() -> Option<PathBuf> {
+        directories::BaseDirs::new()
+            .map(|dirs| dirs.cache_dir().join("rquickshare").join("known_names.tsv"))
     }
 }
 
@@ -349,5 +403,71 @@ mod known_names_tests {
             names.resolve("192.168.0.20:53601", String::new(), "pixel.local."),
             "pixel"
         );
+    }
+}
+
+#[cfg(test)]
+mod known_names_persistence_tests {
+    use super::*;
+
+    const ID: &str = "192.168.0.185:53601";
+
+    fn tmp_file(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("rqs_lib-known-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn known_names_survive_a_restart() {
+        let path = tmp_file("survive.json");
+        let _ = std::fs::remove_file(&path);
+
+        let mut names = KnownNames::load_from(&path);
+        names.resolve(ID, "Kira Foxybyte".to_string(), "Android_VO9RJ6FX.local.");
+        names.save_to(&path).unwrap();
+
+        // A fresh instance (new app session) already knows the name, even
+        // when the phone only sends compact records.
+        let mut again = KnownNames::load_from(&path);
+        assert_eq!(
+            again.resolve(ID, String::new(), "Android_WBF7Y4LB.local."),
+            "Kira Foxybyte"
+        );
+    }
+
+    #[test]
+    fn known_names_load_from_a_missing_or_broken_file_is_empty() {
+        let missing = tmp_file("missing.json");
+        let _ = std::fs::remove_file(&missing);
+        let mut names = KnownNames::load_from(&missing);
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_X.local."),
+            "Android_X"
+        );
+
+        let broken = tmp_file("broken.json");
+        std::fs::write(&broken, "{not json").unwrap();
+        let mut names = KnownNames::load_from(&broken);
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_X.local."),
+            "Android_X"
+        );
+    }
+
+    #[test]
+    fn known_names_only_need_saving_after_learning_a_name() {
+        let mut names = KnownNames::default();
+        assert!(!names.is_dirty());
+        names.resolve(ID, String::new(), "Android_X.local.");
+        assert!(!names.is_dirty());
+        names.resolve(ID, "Kira Foxybyte".to_string(), "Android_X.local.");
+        assert!(names.is_dirty());
+        // Seeing the same name again changes nothing.
+        let path = tmp_file("dirty.json");
+        names.save_to(&path).unwrap();
+        assert!(!names.is_dirty());
+        names.resolve(ID, "Kira Foxybyte".to_string(), "Android_X.local.");
+        assert!(!names.is_dirty());
     }
 }

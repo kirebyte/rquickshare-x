@@ -42,8 +42,13 @@ impl MDnsDiscovery {
 
         // Map with fullname as key and EndpointInfo as value
         let mut cache: HashMap<String, EndpointInfo> = HashMap::new();
-        // Real display names seen so far, keyed by ip:port.
-        let mut names = KnownNames::default();
+        // Real display names seen so far, keyed by ip:port, saved to disk so
+        // the next session shows them right away.
+        let names_path = KnownNames::default_path();
+        let mut names = match &names_path {
+            Some(path) => KnownNames::load_from(path),
+            None => KnownNames::default(),
+        };
 
         loop {
             tokio::select! {
@@ -90,6 +95,13 @@ impl MDnsDiscovery {
                                     // name seen earlier for this endpoint, or fall back to
                                     // the mDNS hostname so the device is still listed.
                                     let dn = names.resolve(&ip_port, dn, info.get_hostname());
+                                    if names.is_dirty() {
+                                        if let Some(path) = &names_path {
+                                            if let Err(e) = names.save_to(path) {
+                                                warn!("MDnsDiscovery: couldn't save known names to {}: {e}", path.display());
+                                            }
+                                        }
+                                    }
 
                                     let fullname = info.get_fullname().to_string();
                                     if TcpStream::connect(&ip_port).await.is_ok() {
