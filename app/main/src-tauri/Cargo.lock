@@ -4203,8 +4203,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rqs_dbus"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "log",
+ "rqs_lib",
+ "tokio",
+ "zbus 5.2.0",
+]
+
+[[package]]
 name = "rqs_lib"
-version = "0.11.7"
+version = "0.11.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4240,13 +4251,14 @@ dependencies = [
 
 [[package]]
 name = "rquickshare-x"
-version = "0.11.7"
+version = "0.11.9"
 dependencies = [
  "anyhow",
  "fern",
  "humantime",
  "log",
  "notify-rust",
+ "rqs_dbus",
  "rqs_lib",
  "serde",
  "serde_json",
@@ -4263,6 +4275,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "zbus 5.2.0",
 ]
 
 [[package]]

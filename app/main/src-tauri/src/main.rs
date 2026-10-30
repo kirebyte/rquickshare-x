@@ -212,6 +212,8 @@ async fn main() -> Result<(), anyhow::Error> {
             });
 
             spawn_receiver_tasks(app.app_handle());
+            #[cfg(target_os = "linux")]
+            spawn_dbus_service(app.app_handle());
             Ok(())
         })
         .on_window_event(handle_window_event)
@@ -371,6 +373,59 @@ fn rs2js_channelmessage(message: ChannelMessage, manager: &AppHandle) {
 
     info!("rs2js_channelmessage: {:?}", &message);
     manager.emit("rs2js_channelmessage", &message).unwrap();
+}
+
+/// Lets the D-Bus interface start and stop discovery through the app state.
+#[cfg(target_os = "linux")]
+struct DbusDiscovery(AppHandle);
+
+#[cfg(target_os = "linux")]
+impl rqs_dbus::service::DiscoveryControl for DbusDiscovery {
+    fn start(&self) -> Result<(), String> {
+        let state: tauri::State<'_, AppState> = self.0.state();
+        let dch_sender = state.dch_sender.clone();
+        let started = state
+            .rqs
+            .lock()
+            .unwrap()
+            .discovery(dch_sender)
+            .map_err(|e| format!("unable to start discovery: {e}"));
+        started
+    }
+
+    fn stop(&self) {
+        let state: tauri::State<'_, AppState> = self.0.state();
+        state.rqs.lock().unwrap().stop_discovery();
+    }
+}
+
+/// Exposes `dev.mandre.rquicksharex.Share` on the session bus, so file
+/// managers and scripts can list devices and send without the window.
+#[cfg(target_os = "linux")]
+fn spawn_dbus_service(app_handle: &AppHandle) {
+    let app = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let (devices, sender_file, message_sender) = {
+            let state: tauri::State<'_, AppState> = app.state();
+            (
+                state.dch_sender.subscribe(),
+                state.sender_file.clone(),
+                state.message_sender.clone(),
+            )
+        };
+        let connection = match zbus::Connection::session().await {
+            Ok(connection) => connection,
+            Err(e) => {
+                warn!("D-Bus interface not available: {e}");
+                return;
+            }
+        };
+        let control = Arc::new(DbusDiscovery(app.clone()));
+        match rqs_dbus::service::serve(connection, control, devices, sender_file, message_sender).await {
+            Ok(()) => info!("D-Bus interface up as {}", rqs_dbus::service::BUS_NAME),
+            Err(e) => warn!("D-Bus interface not started: {e}"),
+        }
+    });
 }
 
 fn rs2js_endpointinfo(message: EndpointInfo, manager: &AppHandle) {

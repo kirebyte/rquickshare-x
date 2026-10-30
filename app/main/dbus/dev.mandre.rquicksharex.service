@@ -1,0 +1,6 @@
+# D-Bus activation for the dev.mandre.rquicksharex.Share interface.
+# Install to /usr/share/dbus-1/services/ so a client call starts the app
+# (it hides to the tray when "start minimized" is on).
+[D-BUS Service]
+Name=dev.mandre.rquicksharex
+Exec=/usr/bin/rquickshare-x
