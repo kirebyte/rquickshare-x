@@ -5,3 +5,4 @@
 pub mod devices;
 pub mod outbound;
 pub mod send;
+pub mod service;
