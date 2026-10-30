@@ -1,0 +1,16 @@
+[package]
+name = "rqs_dbus"
+version = "0.1.0"
+edition = "2021"
+description = "D-Bus interface (dev.mandre.rquicksharex.Share) on top of rqs_lib"
+license = "GPL-3.0"
+
+[dependencies]
+rqs_lib = { path = "../core_lib" }
+futures-util = "0.3"
+log = "0.4"
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
