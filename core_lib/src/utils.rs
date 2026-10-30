@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
@@ -115,6 +116,30 @@ pub fn mdns_display_name(name: String, hostname: &str) -> String {
         .trim_end_matches('.')
         .trim_end_matches(".local")
         .to_string()
+}
+
+/// Remembers the last real display name seen per endpoint id (`ip:port`).
+/// Android phones alternate between compact n= records (no name) and long ones
+/// (with the name) for the same endpoint, and pick a new mDNS hostname each
+/// time Quick Share is reopened, so without this the device keeps flipping
+/// back to its hostname.
+#[derive(Default)]
+pub struct KnownNames(HashMap<String, String>);
+
+impl KnownNames {
+    /// Returns the display name to show for the endpoint `id` announced with
+    /// `name` (possibly empty) and the mDNS `hostname`: the real name if this
+    /// record or a previous one carried it, else the hostname fallback.
+    pub fn resolve(&mut self, id: &str, name: String, hostname: &str) -> String {
+        if !name.is_empty() {
+            self.0.insert(id.to_string(), name.clone());
+            return name;
+        }
+        match self.0.get(id) {
+            Some(known) => known.clone(),
+            None => mdns_display_name(name, hostname),
+        }
+    }
 }
 
 pub fn parse_mdns_endpoint_info(encoded_str: &str) -> Result<(DeviceType, String), anyhow::Error> {
@@ -286,5 +311,43 @@ mod tests {
 
         assert_eq!(parse_info.1, device_name);
         assert_eq!(parse_info.0, device_type);
+    }
+}
+
+#[cfg(test)]
+mod known_names_tests {
+    use super::*;
+
+    const ID: &str = "192.168.0.185:53601";
+
+    #[test]
+    fn known_names_keep_the_real_name_for_compact_records() {
+        let mut names = KnownNames::default();
+        // First announcement is compact: only the hostname is known.
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_VO9RJ6FX.local."),
+            "Android_VO9RJ6FX"
+        );
+        // A long announcement brings the real name.
+        assert_eq!(
+            names.resolve(ID, "Kira Foxybyte".to_string(), "Android_VO9RJ6FX.local."),
+            "Kira Foxybyte"
+        );
+        // The next compact announcement must not drop it.
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_VO9RJ6FX.local."),
+            "Kira Foxybyte"
+        );
+        // The phone picks a new mDNS hostname when Quick Share is reopened,
+        // but keeps its ip:port, so the name survives that too.
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_IEYSPSV7.local."),
+            "Kira Foxybyte"
+        );
+        // Another endpoint is still resolved by its own hostname.
+        assert_eq!(
+            names.resolve("192.168.0.20:53601", String::new(), "pixel.local."),
+            "pixel"
+        );
     }
 }

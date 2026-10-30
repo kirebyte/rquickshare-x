@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
-use crate::utils::{is_not_self_ip, mdns_display_name, parse_mdns_endpoint_info};
+use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info, KnownNames};
 use crate::DeviceType;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
@@ -42,6 +42,8 @@ impl MDnsDiscovery {
 
         // Map with fullname as key and EndpointInfo as value
         let mut cache: HashMap<String, EndpointInfo> = HashMap::new();
+        // Real display names seen so far, keyed by ip:port.
+        let mut names = KnownNames::default();
 
         loop {
             tokio::select! {
@@ -83,11 +85,12 @@ impl MDnsDiscovery {
                                         Err(_) => continue
                                     };
 
-                                    // Compact n= records carry no display name: fall back to
-                                    // the mDNS hostname so the device is still listed.
-                                    let dn = mdns_display_name(dn, info.get_hostname());
-
                                     let ip_port = format!("{ip}:{port}");
+                                    // Compact n= records carry no display name: reuse the
+                                    // name seen earlier for this endpoint, or fall back to
+                                    // the mDNS hostname so the device is still listed.
+                                    let dn = names.resolve(&ip_port, dn, info.get_hostname());
+
                                     let fullname = info.get_fullname().to_string();
                                     if TcpStream::connect(&ip_port).await.is_ok() {
                                         let ei = EndpointInfo {
