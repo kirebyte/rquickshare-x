@@ -127,8 +127,13 @@ impl MDnsDiscovery {
         // Without this the daemon thread outlives the discovery and keeps
         // sending to a receiver nobody reads ("sending on a closed channel"
         // on every announcement, for the rest of the process).
+        // Wait for the daemon to confirm: dropping the receiver right away
+        // makes it log "failed to send response of shutdown".
         match self.daemon.shutdown() {
-            Ok(_) => info!("MDnsDiscovery: daemon shut down"),
+            Ok(done) => {
+                let _ = done.recv_async().await;
+                info!("MDnsDiscovery: daemon shut down");
+            }
             Err(e) => warn!("MDnsDiscovery: daemon shutdown failed: {e}"),
         }
 
