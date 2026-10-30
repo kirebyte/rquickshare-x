@@ -132,20 +132,21 @@ pub struct KnownNames {
 
 impl KnownNames {
     /// Returns the display name to show for the endpoint `id` announced with
-    /// `name` (possibly empty) and the mDNS `hostname`: the real name if this
-    /// record or a previous one carried it, else the hostname fallback.
+    /// `name` (possibly empty) and the mDNS `hostname`: `Name (hostname)` if
+    /// this record or a previous one carried the real name, else the hostname.
     pub fn resolve(&mut self, id: &str, name: String, hostname: &str) -> String {
+        let host = mdns_display_name(String::new(), hostname);
         if !name.is_empty() {
             let name = name.replace(['\t', '\n', '\r'], " ");
             if self.names.get(id) != Some(&name) {
                 self.names.insert(id.to_string(), name.clone());
                 self.dirty = true;
             }
-            return name;
+            return format!("{name} ({host})");
         }
         match self.names.get(id) {
-            Some(known) => known.clone(),
-            None => mdns_display_name(name, hostname),
+            Some(known) => format!("{known} ({host})"),
+            None => host,
         }
     }
 
@@ -382,26 +383,41 @@ mod known_names_tests {
             names.resolve(ID, String::new(), "Android_VO9RJ6FX.local."),
             "Android_VO9RJ6FX"
         );
-        // A long announcement brings the real name.
+        // A long announcement brings the real name; the hostname stays visible.
         assert_eq!(
             names.resolve(ID, "Kira Foxybyte".to_string(), "Android_VO9RJ6FX.local."),
-            "Kira Foxybyte"
+            "Kira Foxybyte (Android_VO9RJ6FX)"
         );
         // The next compact announcement must not drop it.
         assert_eq!(
             names.resolve(ID, String::new(), "Android_VO9RJ6FX.local."),
-            "Kira Foxybyte"
+            "Kira Foxybyte (Android_VO9RJ6FX)"
         );
         // The phone picks a new mDNS hostname when Quick Share is reopened,
-        // but keeps its ip:port, so the name survives that too.
+        // but keeps its ip:port, so the name survives and the hostname follows.
         assert_eq!(
             names.resolve(ID, String::new(), "Android_IEYSPSV7.local."),
-            "Kira Foxybyte"
+            "Kira Foxybyte (Android_IEYSPSV7)"
         );
         // Another endpoint is still resolved by its own hostname.
         assert_eq!(
             names.resolve("192.168.0.20:53601", String::new(), "pixel.local."),
             "pixel"
+        );
+    }
+
+    #[test]
+    fn known_names_take_a_renamed_device_right_away() {
+        let mut names = KnownNames::default();
+        names.resolve(ID, "Kira Foxybyte".to_string(), "Android_X.local.");
+        assert_eq!(
+            names.resolve(ID, "Kira Nueva".to_string(), "Android_X.local."),
+            "Kira Nueva (Android_X)"
+        );
+        assert!(names.is_dirty());
+        assert_eq!(
+            names.resolve(ID, String::new(), "Android_X.local."),
+            "Kira Nueva (Android_X)"
         );
     }
 }
@@ -432,7 +448,7 @@ mod known_names_persistence_tests {
         let mut again = KnownNames::load_from(&path);
         assert_eq!(
             again.resolve(ID, String::new(), "Android_WBF7Y4LB.local."),
-            "Kira Foxybyte"
+            "Kira Foxybyte (Android_WBF7Y4LB)"
         );
     }
 
