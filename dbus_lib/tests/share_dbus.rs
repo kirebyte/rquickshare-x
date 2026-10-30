@@ -11,6 +11,21 @@ use tokio::sync::{broadcast, mpsc};
 
 use rqs_dbus::service::{serve, DiscoveryControl, BUS_NAME, OBJECT_PATH};
 
+/// Configuración mínima de `dbus-daemon`: sin `servicedirs`, para que nada
+/// se active solo.
+const PRIVATE_BUS_CONFIG: &str = r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#;
+
 struct PrivateBus {
     address: String,
     pid: u32,
@@ -18,8 +33,20 @@ struct PrivateBus {
 
 impl PrivateBus {
     fn start() -> Self {
+        // Bus privado SIN activación de servicios: con la configuración de
+        // sesión estándar, llamar a un nombre arrancaría la app de verdad.
+        let config = std::env::temp_dir().join(format!(
+            "private-bus-{}-{}.conf",
+            std::process::id(),
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "-")
+        ));
+        std::fs::write(&config, PRIVATE_BUS_CONFIG).unwrap();
         let out = Command::new("dbus-daemon")
-            .args(["--session", "--fork", "--print-address=1", "--print-pid=1"])
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--fork", "--print-address=1", "--print-pid=1"])
             .stdout(Stdio::piped())
             .output()
             .expect("dbus-daemon must be installed");
